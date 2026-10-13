@@ -2,6 +2,7 @@
 """fxlive's self-check: cf_host (its ColdFire stage) against Tape Echo's native oracle.
 
     make check
+    <checkout>/.venv/bin/python3 check.py [--octabam <checkout>]
 
 cf_host.cpp runs the stock delay routine 0x400031a0 one frame
 per block from a built image and its DRAM runtime, staging the knobs through

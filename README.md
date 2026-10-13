@@ -24,8 +24,9 @@ Then open http://127.0.0.1:8573. `FXLIVEARGS` passes `--port N`,
 
 ## Setup
 
-- **The checkout** is the one you run `make` from (or above), else
-  `OCTABAM=<path>`, else `../octabam` beside this repository
+- **The checkout** is `OCTABAM=<path>` (to `make`; `--octabam <path>` or
+  `OCTABAM=` when running `fxlive.py` or `check.py` directly), else the one
+  you run from (or above), else `../octabam` beside this repository
   (`octabam.py`). It needs what octabam's own gates need: `make setup` and
   `make os && make recon` done (in a worktree: the `vendor/` and `.venv/`
   symlinks and `out/raw/section_3_MAIN_OS.bin`, as octabam's AGENTS.md

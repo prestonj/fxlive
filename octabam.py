@@ -6,9 +6,11 @@ compiles its two hosts from that checkout's sources. Any checkout works,
 including a worktree with a module branch in it, which is the point.
 
 The checkout is, first match:
-  1. $OCTABAM;
-  2. the directory you run from, or one above it, that holds tools/remix/schema.py;
-  3. ../octabam beside this repository.
+  1. --octabam PATH on the command line (read here, at import, because
+     ROOT is needed before a script parses its arguments);
+  2. $OCTABAM;
+  3. the directory you run from, or one above it, that holds tools/remix/schema.py;
+  4. ../octabam beside this repository.
 
 Everything fxlive writes goes under the checkout's out/fxlive/ (gitignored
 there): the images, the dumps, and build/, the two hosts. So a worktree's
@@ -25,20 +27,31 @@ def _is_octabam(d):
     return (d / "tools/remix/schema.py").is_file() and (d / "tools/build/build_bus.py").is_file()
 
 
+def _from_argv(argv):
+    for i, arg in enumerate(argv):
+        if arg == "--octabam":
+            if i + 1 >= len(argv):
+                sys.exit("fxlive: --octabam needs a path")
+            return argv[i + 1]
+        if arg.startswith("--octabam="):
+            return arg.split("=", 1)[1]
+    return None
+
+
 def find():
-    env = os.environ.get("OCTABAM")
-    if env:
-        d = pathlib.Path(env).expanduser().resolve()
-        if not _is_octabam(d):
-            sys.exit(f"fxlive: OCTABAM={env} is not an octabam checkout (no tools/remix/schema.py)")
-        return d
+    for name, given in (("--octabam", _from_argv(sys.argv[1:])), ("OCTABAM", os.environ.get("OCTABAM"))):
+        if given:
+            d = pathlib.Path(given).expanduser().resolve()
+            if not _is_octabam(d):
+                sys.exit(f"fxlive: {name}={given} is not an octabam checkout (no tools/remix/schema.py)")
+            return d
     for d in (pathlib.Path.cwd().resolve(), *pathlib.Path.cwd().resolve().parents):
         if _is_octabam(d):
             return d
     d = (HERE.parent / "octabam").resolve()
     if _is_octabam(d):
         return d
-    sys.exit("fxlive: no octabam checkout found: run from inside one, or set OCTABAM=<path>")
+    sys.exit("fxlive: no octabam checkout found: run from inside one, pass --octabam <path>, or set OCTABAM=<path>")
 
 
 ROOT = find()

@@ -2,7 +2,7 @@
 """Hear one effect live: a WAV on loop through the real code, knobs in a browser.
 
     make [OCTABAM=<checkout>] [REMIX=miniverb] [MODULE=MINIVERB] [WAV=loop.wav]
-    OCTABAM=<checkout> <checkout>/.venv/bin/python3 fxlive.py [--remix R] [--module KEY] [--wav loop.wav]
+    <checkout>/.venv/bin/python3 fxlive.py [--octabam <checkout>] [--remix R] [--module KEY] [--wav loop.wav]
 
 Then open http://127.0.0.1:8573. It starts stopped with nothing selected:
 choose a remix (its modules list from the manifests, nothing builds), then
@@ -10,7 +10,8 @@ a module (the remix builds), then Play. REMIX and MODULE pre-select the
 same. A page has a slider for every knob the module draws, a wet/dry
 monitor mix, bypass, the loop, and the meters.
 
-OCTABAM. fxlive runs against an octabam checkout (octabam.py says which)
+OCTABAM. fxlive runs against an octabam checkout (--octabam, else
+$OCTABAM, else the one you run from: octabam.py says which)
 and keeps none of its code: it imports the remixer from it, builds its
 remixes, and builds its two hosts from its sources into its out/fxlive/.
 
@@ -874,6 +875,8 @@ def make_handler(s):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--octabam", metavar="PATH", help=f"octabam checkout to run against (default: $OCTABAM, else the one "
+                    f"you run from, else ../octabam; now {ROOT})")  # read by octabam.py at import
     ap.add_argument("--module", default=os.environ.get("MODULE") or None,
                     help="pre-select a module KEY, which builds it at once (default: none)")
     ap.add_argument("--remix", default=os.environ.get("REMIX") or None,
