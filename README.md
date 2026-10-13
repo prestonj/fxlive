@@ -7,20 +7,57 @@ sound while writing an effect: what you hear here is the module's
 instruction stream, but a sound found here is not a result until it is
 rendered and `make check` passes.
 
+It is a companion to [octabam](https://github.com/sambanks/octabam), kept
+outside it: it carries none of octabam's code and runs against any octabam
+checkout, including a worktree with the module you are writing in it.
+
 ```bash
-make fxlive                                  # nothing selected, stopped
-make fxlive MODULE=MINIVERB WAV=loop.wav     # pre-select; still waits for Play
-make fxlive MODULE=SPECTRUM REMIX=bottleservice   # build it in a particular remix
+cd ~/git/octabam/.claude/worktrees/my-module      # any octabam checkout
+make -C ~/git/fxlive                               # nothing selected, stopped
+make -C ~/git/fxlive MODULE=MINIVERB WAV=loop.wav  # pre-select; still waits for Play
+make -C ~/git/fxlive MODULE=SPECTRUM REMIX=bottleservice   # build it in a particular remix
+make -C ~/git/fxlive check                         # fxlive's own check (below)
 ```
 
-Then open http://127.0.0.1:8573. Needs `make emu-setup` (numpy,
-sounddevice) and, for ColdFire effects, `make emu-cf` (`ot_cf_host`).
-`FXLIVEARGS` passes `--port N`, `--device NAME` or `--no-audio`.
+Then open http://127.0.0.1:8573. `FXLIVEARGS` passes `--port N`,
+`--device NAME` or `--no-audio`.
 
-fxlive needs a `dsp_host` with `-stream`. If yours predates it,
-`scripts/setup.sh` rebuilds it; a branch that changes `dsp_host.cpp` points
-`DSP_HOST` at its own build instead (AGENTS.md). fxlive says which when
-the host is missing or too old.
+## Setup
+
+- **The checkout** is the one you run `make` from (or above), else
+  `OCTABAM=<path>`, else `../octabam` beside this repository
+  (`octabam.py`). It needs what octabam's own gates need: `make setup` and
+  `make os && make recon` done (in a worktree: the `vendor/` and `.venv/`
+  symlinks and `out/raw/section_3_MAIN_OS.bin`, as octabam's AGENTS.md
+  says), and `make emu-setup` for numpy and sounddevice in `.venv`.
+- **The hosts** build on first use, into the checkout's
+  `out/fxlive/build/` (`make hosts`; about a minute cold, a no-op after):
+  - `dsp_host_stream`: the checkout's own
+    `tools/harness/dsp_host/dsp_host.cpp` with
+    `patches/dsp_host-stream.patch` (`-stream`: blocks over stdin and
+    stdout). Patched at build time, so a branch that changes `dsp_host.cpp`
+    gets a host built from its own source. If octabam changes the lines
+    the patch touches, `patch --fuzz=0` refuses and the build stops: update
+    the patch, never apply it loosely.
+  - `ot_cf_host`: `cf_host.cpp` here, linked against the checkout's
+    `ot_machine` (octabam's `tools/emu/ot_emu`, added to this build).
+
+  Each checkout gets hosts built from its own sources; nothing is shared
+  between worktrees.
+
+## What it depends on in octabam
+
+These are octabam's internals, not a published interface, so a change on
+their side shows up here as an import error or a failed build:
+
+- Python: `remix.registry`, `remix.schema` (`BusRole`, `Kind`,
+  `render_slot`), `remix.stock.NO_DSP`, `send_probe` (`dump_mem`,
+  `entry_points`, `WARMUP_BLOCKS`), and for `check.py`
+  `verify_tapeecho_cpu` (`State`, `Params`, `RING`).
+- The build: `tools/build/build_bus.py`'s module-level `OUT` and `main()`
+  (`build_image.py`), and `out/platform/runtime.raw` / `layout.json`.
+- C++: `tools/harness/dsp_host/dsp_host.cpp` (the patch), and
+  `tools/emu/ot_emu`'s `ot_machine` and `dsp56kEmu` targets.
 
 ## Using it
 
@@ -57,15 +94,16 @@ and in `character-txtr` (P:0x01a11) rendered bit-identical with every knob
 up, and so did SPECTRUM in the same two. That is two modules, not a proof.
 A module that hard-codes an address the build moves between remixes,
 instead of one the build rewrites, could differ between carriers (the same
-class of bug as AGENTS.md's payload-relative stock-table trap, which is
+class of bug as octabam's AGENTS.md's payload-relative stock-table trap, which is
 between payloads A and B rather than between remixes). If two carriers
 sound different, that difference is a finding, not a matter of taste.
 The smallest carrier is the default because it builds fastest. Every
 module arrives with a remix (the selftest refuses one that no remix
 carries), so a new module can be picked as soon as it builds.
 
-fxlive builds to `out/fxlive/<remix>.bin` (`BUS_OUT`), never
-`out/mainos_bus.bin`. A DRAM build also rewrites the fixed `out/platform/`,
+fxlive builds to `out/fxlive/<remix>.bin`, never `out/mainos_bus.bin`:
+`build_image.py` imports `build_bus`, points its `OUT` there and runs
+its `main()`. A DRAM build also rewrites the fixed `out/platform/`,
 so fxlive copies the runtime to `out/fxlive/<remix>.runtime.raw` (and
 `.base`) right after its own build. A gate run in the same worktree at the
 same time can still race it there; do not run both at once.
@@ -77,11 +115,13 @@ same time can still race it there; do not run both at once.
   `schema.render_slot`, `r0 = 0`, 16 frames a block, payload A. Each block
   carries its twelve knob values and samples over a pipe. The stream's
   output is bit-identical to a file render of the same input and knobs
-  (MINIVERB, 3,000 blocks). About 4-26x real time through fxlive, by module.
+  (MINIVERB, 3,000 blocks, measured 9 Oct 2026 in octabam's `fx-live`
+  branch; the patched source here is that branch's `dsp_host.cpp` byte for
+  byte, apart from one comment, as of octabam `063a4262`). About 4-26x real time through fxlive, by module.
 - **CPU effects** (`CF_AUDIO` in `fxlive.py`: TAPE ECHO, and the stock
   DELAY of `stock.NO_DSP`): after the DSP stage, `ot_cf_host` runs the
   ColdFire's delay routine `0x400031a0` on T5 ("cf_host" below). It equals
-  Tape Echo's native oracle bit for bit (`make fxlive-check`). About
+  Tape Echo's native oracle bit for bit (`make check`). About
   1.6-2.3x real time through fxlive, 7,500-8,800 CPU instructions a block.
 - **Hot swap.** Every file under the module's directory and the host
   remix's `remix.py` is watched. A save rebuilds, boots a new engine, warms
@@ -104,7 +144,7 @@ same time can still race it there; do not run both at once.
 
 ## cf_host: the ColdFire stage
 
-`out/emu/ot_cf_host` (`make emu-cf`; source `cf_host.cpp` here):
+`out/fxlive/build/ot_cf_host` (`make hosts`; source `cf_host.cpp` here):
 the ColdFire's per-frame delay routine `0x400031a0` on one track, one
 16-sample block per call, from a built image and its DRAM runtime. It is
 `tools/harness/tapeecho_cpu_probe.cpp`'s benchmark setup made a tool:
@@ -122,8 +162,9 @@ the ColdFire's per-frame delay routine `0x400031a0` on one track, one
   block comes back processed in place.
 - **`--stream`** speaks `dsp_host -stream`'s packets; `--selftest` sends
   an impulse and prints where it returns and the speed.
-- **Measured** (9 Oct 2026, `make fxlive-check`, which builds its own
-  `tapeecho` image): TAPE ECHO through `cf_host` equals
+- **Measured** (9 Oct 2026, `make check`, which builds its own
+  `tapeecho` image; the same three results 12 Oct 2026 against octabam
+  `063a4262` from this repository): TAPE ECHO through `cf_host` equals
   `modules/tapeecho/cpu.c` bit for bit, 3,000 blocks with every control
   moving, on T1 and T5; the stock DELAY's SYNC repeat at 60 BPM lands
   twice as late as at 120 (16,537 and 33,075 samples). Alone it runs
@@ -139,10 +180,10 @@ the ColdFire's per-frame delay routine `0x400031a0` on one track, one
 
 ## Checking it
 
-`make fxlive-check` (about 10 s; needs `make emu-setup` and `make
-emu-cf`) builds its own `tapeecho` image and holds `cf_host` to Tape
+`make check` (about 10 s after the hosts are built) builds its own
+`tapeecho` image and holds `cf_host` to Tape
 Echo's native oracle and the stock DELAY's tempo law, as above. It is
-fxlive's check, not a module gate: nothing in `make check` runs it. Run it
+fxlive's check, not a module gate: nothing in octabam's `make check` runs it. Run it
 after changing `cf_host.cpp` or anything it stages.
 
 ## The API
@@ -162,12 +203,12 @@ set knobs, rebuild and read the result:
 
 ## What it cannot show
 
-Everything a `dsp_host` render cannot (`../README.md` "What the harness
-cannot see"), including the stock reverbs' wet signal (`SUGGESTIONS.md`,
+Everything a `dsp_host` render cannot (octabam's `tools/harness/README.md`,
+"What the harness cannot see"), including the stock reverbs' wet signal (`SUGGESTIONS.md`,
 item 3). Also:
 
 - knob words are clean: an LFO leaves bits 8-15 set, which no local render
-  writes (AGENTS.md);
+  writes (octabam's AGENTS.md);
 - RAM starts zeroed (`verify_dirtystate` covers uncleared state);
 - the dispatcher is modelled, not run: anything keyed on r7, r6 or
   `X:0x213` is measured under the port;
@@ -206,7 +247,7 @@ changes is the remix's role:
   per track, followed by the `cf_host` stage.
 - **Slot placement in `dsp_host` is a model.** Its r7 for each slot is
   computed, not measured, and was once wrong (three r7 bumps per track,
-  AGENTS.md); a chain whose behaviour depends on its slot is checked under
+  octabam's AGENTS.md); a chain whose behaviour depends on its slot is checked under
   the port.
 
 The likely shape: keep the module-first picker for one effect, and add a

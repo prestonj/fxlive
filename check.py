@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """fxlive's self-check: cf_host (its ColdFire stage) against Tape Echo's native oracle.
 
-    make fxlive-check
+    make check
 
-tools/harness/fxlive/cf_host.cpp runs the stock delay routine 0x400031a0 one frame
+cf_host.cpp runs the stock delay routine 0x400031a0 one frame
 per block from a built image and its DRAM runtime, staging the knobs through
 stock's own producer copy and the tempo words as the frame code sets them.
 This check streams 3,000 blocks with every Tape Echo control moving through
@@ -13,28 +13,24 @@ oracle verify_tapeecho_cpu.py holds the ColdFire kernels to. Then it checks
 the stock DELAY's tempo sync in cf_host: a repeat at 60 BPM lands twice as
 late as at 120.
 
-It builds its own image of the `tapeecho` remix to out/fxlive/ (BUS_OUT,
-so out/mainos_bus.bin is left alone) and copies that build's DRAM runtime
+It builds its own image of the `tapeecho` remix to out/fxlive/check/
+(build_image.py, so out/mainos_bus.bin is left alone) and copies that build's DRAM runtime
 out of out/platform/ at once. It borrows State, Params and RING from
 tools/verify/verify_tapeecho_cpu.py, Tape Echo's own verifier, so a change
 to that struct shows up here as a failure.
 """
 import ctypes as C
 import json
-import os
 import pathlib
 import subprocess
 import sys
 
 import numpy as np
 
-ROOT = pathlib.Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "tools"))
-import toolpath  # noqa: E402,F401
+from octabam import CF_HOST as HOST, OUTDIR, ROOT, build_image  # noqa: E402  (finds the checkout)
 import verify_tapeecho_cpu as V  # noqa: E402  (State, Params, RING)
 
-OUT = ROOT / "out/fxlive/check"
-HOST = ROOT / "out/emu/ot_cf_host"
+OUT = OUTDIR / "check"
 FAILS = 0
 
 
@@ -112,13 +108,10 @@ def delay_sync(image, runtime):
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    if not (ROOT / "out/emu/CMakeCache.txt").is_file():
-        raise SystemExit("fxlive check: the port is not configured here: make emu-cf")
-    run(["cmake", "--build", "out/emu", "--target", "ot_cf_host", "-j8"])
+    if not HOST.is_file():
+        raise SystemExit(f"fxlive check: no {HOST}: `make hosts` in the fxlive repository")
     image = OUT / "tapeecho.bin"
-    b = subprocess.run([sys.executable, "tools/build/build_bus.py"], cwd=ROOT,
-                       env=dict(os.environ, REMIX="tapeecho", XBUS="1", SPEC="1", BUS_OUT=str(image)),
-                       capture_output=True, text=True)
+    b = build_image("tapeecho", image)
     if b.returncode or "platform runtime:" not in b.stdout:
         raise SystemExit(f"fxlive check: the tapeecho build failed\n{(b.stdout + b.stderr)[-2000:]}")
     raw = OUT / "tapeecho.runtime.raw"

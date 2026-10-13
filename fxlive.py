@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Hear one effect live: a WAV on loop through the real code, knobs in a browser.
 
-    make fxlive [REMIX=miniverb] [MODULE=MINIVERB] [WAV=loop.wav]
-    .venv/bin/python3 tools/harness/fxlive.py [--remix R] [--module KEY] [--wav loop.wav]
+    make [OCTABAM=<checkout>] [REMIX=miniverb] [MODULE=MINIVERB] [WAV=loop.wav]
+    OCTABAM=<checkout> <checkout>/.venv/bin/python3 fxlive.py [--remix R] [--module KEY] [--wav loop.wav]
 
 Then open http://127.0.0.1:8573. It starts stopped with nothing selected:
 choose a remix (its modules list from the manifests, nothing builds), then
@@ -10,8 +10,14 @@ a module (the remix builds), then Play. REMIX and MODULE pre-select the
 same. A page has a slider for every knob the module draws, a wet/dry
 monitor mix, bypass, the loop, and the meters.
 
-WHAT RUNS. The remix is built to a private image (BUS_OUT=out/fxlive/...,
-never out/mainos_bus.bin), payload A is dumped, and `dsp_host -stream` runs
+OCTABAM. fxlive runs against an octabam checkout (octabam.py says which)
+and keeps none of its code: it imports the remixer from it, builds its
+remixes, and builds its two hosts from its sources into its out/fxlive/.
+
+WHAT RUNS. The remix is built to a private image (out/fxlive/<remix>.bin,
+never out/mainos_bus.bin: build_image.py), payload A is dumped, and
+`dsp_host -stream` (the checkout's dsp_host.cpp with
+patches/dsp_host-stream.patch, `make hosts`) runs
 the module's init/proc from the dispatch table exactly as `send_probe
 --direct` does: one FX2 instance, r0 = 0 as the dispatcher passes it, 16
 frames a block. The loop is fed block by block over a pipe with the knobs in
@@ -21,10 +27,10 @@ input and knobs.
 
 COLDFIRE EFFECTS. A module whose sound is made on the ColdFire (CF_AUDIO
 below: TAPE ECHO, and the stock DELAY of stock.NO_DSP) gets a second stage
-after the DSP: `out/emu/ot_cf_host`, the stock delay routine 0x400031a0 on
+after the DSP: `ot_cf_host`, the stock delay routine 0x400031a0 on
 T5 from the same image and a copy of this build's DRAM runtime
-(cf_host.cpp beside this file; `make emu-cf` builds it). Its output equals
-Tape Echo's native oracle bit for bit (`make fxlive-check`). It does
+(cf_host.cpp beside this file; `make hosts` builds it). Its output equals
+Tape Echo's native oracle bit for bit (`make check`). It does
 not add the frame of latency the read-back adds on the unit, and it runs
 the routine, not the firmware around it.
 
@@ -48,9 +54,9 @@ effect the instruction count is a floor, not the CPU budget (no cache, bus
 or DMA stalls, and none of the rest of the frame). A sound you like
 here is a starting point for a render and `make check`, never a result.
 
-dsp_host: a branch that changes tools/harness/dsp_host/dsp_host.cpp must
-point DSP_HOST at its own build (AGENTS.md); a shared dsp_host without
--stream exits at once and the page says so.
+dsp_host: built from the checkout's own dsp_host.cpp, so a branch that
+changes it gets its own host. --host overrides; a host without -stream
+exits at once and the page says so.
 """
 import argparse
 import json
@@ -58,7 +64,6 @@ import os
 import pathlib
 import struct
 import subprocess
-import sys
 import threading
 import time
 import traceback
@@ -66,8 +71,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 
-ROOT = pathlib.Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2])); import toolpath  # noqa: E402,F401
+from octabam import CF_HOST, DSP_HOST, OUTDIR, ROOT, build_image  # noqa: E402  (finds the checkout)
 import send_probe                      # noqa: E402  (dump_mem, entry_points, HOST)
 from remix import registry             # noqa: E402
 from remix.schema import BusRole, Kind, render_slot  # noqa: E402
@@ -88,7 +92,6 @@ CHUNK = CHUNK_BLOCKS * FRAMES
 TARGET_FILL = 2048             # frames rendered ahead of the audio device (~46 ms)
 WARMUP_BLOCKS = send_probe.WARMUP_BLOCKS
 XFADE_CHUNKS = 8               # hot-swap crossfade, ~46 ms
-OUTDIR = ROOT / "out/fxlive"
 FS = 8388608.0
 
 
@@ -265,7 +268,6 @@ def describe(m):
 
 
 # ---- one process per stage, one chain per build -------------------------------------
-CF_HOST = ROOT / "out/emu/ot_cf_host"
 CF_TRACK = 4                   # T5: payload A's position 0, where the DSP stage runs
 
 
@@ -328,8 +330,8 @@ class Engine:
         except OSError:
             t = ""
         if "unknown option -stream" in t:
-            return ("this dsp_host predates -stream: rebuild it with scripts/setup.sh, or "
-                    "point DSP_HOST at a build of tools/harness/dsp_host/dsp_host.cpp")
+            return ("this dsp_host has no -stream: `make hosts` in the fxlive repository "
+                    "builds one, or point --host at a build with patches/dsp_host-stream.patch")
         return t[-n:] or f"exit {self.p.poll()}"
 
     def close(self):
@@ -510,19 +512,16 @@ class Session:
             raise RuntimeError(f"{key}: {c['why']}")
         m = mods[key]
         if not pathlib.Path(self.a.host).is_file():
-            raise RuntimeError(f"no dsp_host at {self.a.host}: run scripts/setup.sh, or point "
-                               f"DSP_HOST at a build with -stream (a branch that changes "
-                               f"dsp_host.cpp builds its own, AGENTS.md)")
+            raise RuntimeError(f"no dsp_host at {self.a.host}: `make hosts` in the fxlive "
+                               f"repository builds it")
         how = support(m)[0]
         if how == "cpu" and not CF_HOST.is_file():
             raise RuntimeError(f"{key} is made on the ColdFire and {CF_HOST.relative_to(ROOT)} "
-                               f"is not built: make emu-cf")
+                               f"is not built: `make hosts` in the fxlive repository")
         OUTDIR.mkdir(parents=True, exist_ok=True)
         image = OUTDIR / f"{remix}.bin"
-        env = dict(os.environ, REMIX=remix, XBUS="1", SPEC="1", BUS_OUT=str(image))
         t0 = time.time()
-        b = subprocess.run([sys.executable, "tools/build/build_bus.py"], cwd=ROOT, env=env,
-                           capture_output=True, text=True)
+        b = build_image(remix, image)
         log = (b.stdout + b.stderr).strip()
         if b.returncode != 0:
             raise RuntimeError("build failed:\n" + log[-4000:])
@@ -584,7 +583,7 @@ class Session:
                                 f"fxlive runs {where}; if the module makes its sound anywhere "
                                 f"else, it cannot be heard here. If it is a ColdFire effect "
                                 f"in the stock delay routine, add it to CF_AUDIO in "
-                                f"tools/harness/fxlive/fxlive.py.")
+                                f"fxlive.py.")
         else:
             self.passthrough = ""
         self.how = how
@@ -881,7 +880,7 @@ def main():
                     help="with --module: the remix to build it in (default: the smallest that carries it)")
     ap.add_argument("--wav", default=os.environ.get("WAV") or None, help="loop (default: a built-in demo)")
     ap.add_argument("--port", type=int, default=8573)
-    ap.add_argument("--host", default=str(send_probe.HOST), help="dsp_host with -stream (DSP_HOST)")
+    ap.add_argument("--host", default=str(DSP_HOST), help="dsp_host with -stream (default: fxlive's own build)")
     ap.add_argument("--device", default=None, help="sounddevice output device")
     ap.add_argument("--no-audio", action="store_true", help="no sound device; render on a clock")
     a = ap.parse_args()

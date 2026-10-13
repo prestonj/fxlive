@@ -5,6 +5,14 @@ belong to other people's areas. They are recorded here instead of being
 changed from this one, so each owner can take, adapt or decline them. Each
 says what was measured, what is inferred, and what fxlive does meanwhile.
 
+Written 9 Oct 2026, while fxlive was a folder in octabam
+(`tools/harness/fxlive/`); the paths below are octabam's. fxlive now lives
+in its own repository. Its two changes to octabam's own code, `dsp_host
+-stream` and the build's `BUS_OUT`, were offered upstream and declined, so
+fxlive carries them itself: `patches/dsp_host-stream.patch`, applied at
+build time, and `build_image.py` in place of `BUS_OUT`. Where an item below
+says `BUS_OUT`, read "fxlive's private image path".
+
 ## 1. Declare "the sound is made on the ColdFire" in the manifest
 
 **Area:** the module schema (`tools/remix/schema.py`, `Harness`) and Tape
